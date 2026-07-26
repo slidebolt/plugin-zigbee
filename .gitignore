@@ -1,0 +1,38 @@
+# Environment variables and local secrets
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+
+# Built binaries
+/plugin-zigbee
+/sb-plugin-clean
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test and coverage output
+*.test
+*.out
+*.cover
+
+# Go workspace and build output
+go.work
+dist/
+build/
+bin/
+
+# IDE and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local hardware-specific tests
+test.local.*
