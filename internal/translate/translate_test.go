@@ -1,6 +1,7 @@
 package translate
 
 import (
+	"reflect"
 	"testing"
 
 	domain "github.com/slidebolt/sb-domain"
@@ -29,6 +30,31 @@ func TestLightTranslation(t *testing.T) {
 	action, params, err := Command(domain.LightSetBrightness{Brightness: 12})
 	if err != nil || action != "set_brightness" || params["brightness"] != 12 {
 		t.Fatalf("command: %s %#v %v", action, params, err)
+	}
+}
+
+func TestLightTranslationColorState(t *testing.T) {
+	component := hostapi.Component{
+		ID: "default-light", Kind: "light", Name: "light",
+		Features: map[string]hostapi.Feature{
+			"power": {Write: true}, "brightness": {Write: true}, "color": {Write: true}, "color_temp": {Write: true},
+		},
+		State: map[string]any{"power": "ON", "brightness": float64(40), "color": map[string]any{"x": 0.312, "y": 0.329}},
+	}
+	entity := Entity("0x1", component)
+	light, ok := entity.State.(domain.Light)
+	if !ok {
+		t.Fatalf("state type = %T", entity.State)
+	}
+	if light.ColorMode != "xy" || !reflect.DeepEqual(light.XY, []float64{0.312, 0.329}) {
+		t.Fatalf("light color = %#v", light)
+	}
+
+	component.State = map[string]any{"power": "ON", "color_mode": "rgb", "color": map[string]any{"r": float64(255), "g": float64(128), "b": float64(64)}}
+	entity = Entity("0x1", component)
+	light = entity.State.(domain.Light)
+	if light.ColorMode != "rgb" || !reflect.DeepEqual(light.RGB, []int{255, 128, 64}) {
+		t.Fatalf("light rgb = %#v", light)
 	}
 }
 

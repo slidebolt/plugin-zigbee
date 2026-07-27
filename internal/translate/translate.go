@@ -164,7 +164,29 @@ func state(component hostapi.Component) any {
 	s := component.State
 	switch component.Kind {
 	case "light":
-		return domain.Light{Power: boolean(s["power"]), Brightness: integer(s["brightness"]), Temperature: integer(s["color_temp"]), Effect: stringValue(s["effect"])}
+		light := domain.Light{
+			Power:       boolean(s["power"]),
+			Brightness:  integer(s["brightness"]),
+			Temperature: integer(s["color_temp"]),
+			ColorMode:   stringValue(s["color_mode"]),
+			Effect:      stringValue(s["effect"]),
+		}
+		if xy, ok := xyValue(s); ok {
+			light.XY = xy
+			if light.ColorMode == "" {
+				light.ColorMode = "xy"
+			}
+		}
+		if rgb, ok := rgbValue(s); ok {
+			light.RGB = rgb
+			if light.ColorMode == "" {
+				light.ColorMode = "rgb"
+			}
+		}
+		if light.ColorMode == "" && light.Temperature > 0 {
+			light.ColorMode = "color_temp"
+		}
+		return light
 	case "switch":
 		value, ok := s["power"]
 		if !ok {
@@ -225,6 +247,50 @@ func number(value any) float64 {
 	return 0
 }
 func integer(value any) int { return int(number(value)) }
+func object(value any) map[string]any {
+	if typed, ok := value.(map[string]any); ok {
+		return typed
+	}
+	if raw, ok := value.(map[string]json.RawMessage); ok {
+		result := map[string]any{}
+		for name, data := range raw {
+			var decoded any
+			if json.Unmarshal(data, &decoded) == nil {
+				result[name] = decoded
+			}
+		}
+		return result
+	}
+	return nil
+}
+func xyValue(values map[string]any) ([]float64, bool) {
+	x, y := number(values["x"]), number(values["y"])
+	if color := object(values["color"]); color != nil {
+		if x == 0 {
+			x = number(color["x"])
+		}
+		if y == 0 {
+			y = number(color["y"])
+		}
+	}
+	if x == 0 && y == 0 {
+		return nil, false
+	}
+	return []float64{x, y}, true
+}
+func rgbValue(values map[string]any) ([]int, bool) {
+	color := object(values["color"])
+	if color == nil {
+		return nil, false
+	}
+	_, hasR := color["r"]
+	_, hasG := color["g"]
+	_, hasB := color["b"]
+	if !hasR || !hasG || !hasB {
+		return nil, false
+	}
+	return []int{integer(color["r"]), integer(color["g"]), integer(color["b"])}, true
+}
 func stringValue(value any) string {
 	if value == nil {
 		return ""

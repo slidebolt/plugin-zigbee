@@ -152,56 +152,40 @@ func (a *App) applySnapshot(snapshot hostapi.Snapshot) error {
 		a.devices[device.ID] = device
 	}
 	a.mu.Unlock()
-	desired := map[string]struct{}{}
 	coordinator, coordinatorEntities := translate.Coordinator(snapshot)
 	coordinator.Entities = coordinatorEntities
 	if err := a.store.Save(coordinator); err != nil {
 		return err
 	}
-	desired[coordinator.Key()] = struct{}{}
 	for _, entity := range coordinatorEntities {
 		if err := a.store.Save(entity); err != nil {
 			return err
 		}
-		desired[entity.Key()] = struct{}{}
 	}
 	for _, device := range snapshot.Devices {
-		if err := a.saveDevice(device, desired); err != nil {
+		if err := a.saveDevice(device); err != nil {
 			return err
 		}
 	}
-	entries, err := a.store.Search(PluginID + ".>")
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if _, ok := desired[entry.Key]; ok {
-			continue
-		}
-		if err := a.store.Delete(key(entry.Key)); err != nil {
-			return err
-		}
-	}
+	// Snapshots are upsert-only. A device missing from a snapshot may simply be
+	// unreachable, asleep, or mid-rejoin, and storage.Delete also removes the
+	// user-owned .profile.json sidecar (labels, meta, profile). Pruning here
+	// would silently destroy user data on a transient absence, so removal is
+	// left to the explicit "device.removed" event.
 	log.Printf("plugin-zigbee: synchronized %d device(s) at sequence %d", len(snapshot.Devices), snapshot.Sequence)
 	return nil
 }
 
-func (a *App) saveDevice(device hostapi.Device, desired map[string]struct{}) error {
+func (a *App) saveDevice(device hostapi.Device) error {
 	dev := translate.Device(device)
 	entities := translate.Entities(device)
 	dev.Entities = publicEntities(entities)
 	if err := a.store.Save(dev); err != nil {
 		return err
 	}
-	if desired != nil {
-		desired[dev.Key()] = struct{}{}
-	}
 	for _, entity := range entities {
 		if err := a.store.Save(entity); err != nil {
 			return err
-		}
-		if desired != nil {
-			desired[entity.Key()] = struct{}{}
 		}
 	}
 	return nil
@@ -217,7 +201,7 @@ func (a *App) applyEvent(event hostapi.Event) error {
 		a.mu.Lock()
 		a.devices[device.ID] = device
 		a.mu.Unlock()
-		return a.saveDevice(device, nil)
+		return a.saveDevice(device)
 	case "device.removed":
 		var data struct {
 			DeviceID string `json:"deviceId"`
@@ -226,13 +210,22 @@ func (a *App) applyEvent(event hostapi.Event) error {
 			return err
 		}
 		a.mu.Lock()
-		delete(a.devices, data.DeviceID)
-		a.mu.Unlock()
-		entries, _ := a.store.Search(PluginID + "." + data.DeviceID + ".>")
-		for _, entry := range entries {
-			_ = a.store.Delete(key(entry.Key))
+		device, ok := a.devices[data.DeviceID]
+		if ok {
+			device.Available = false
+			device.Reachability.Status = "removed"
+			device.Reachability.Reason = "device removed from Zigbee host"
+			a.devices[data.DeviceID] = device
 		}
-		return a.store.Delete(domain.DeviceKey{Plugin: PluginID, ID: data.DeviceID})
+		a.mu.Unlock()
+		if !ok {
+			log.Printf("plugin-zigbee: ignored removal for unknown device %s", data.DeviceID)
+			return nil
+		}
+		// A leave/remove event can be part of a factory reset and rejoin flow.
+		// Persist unavailable state, but never delete plugin records here:
+		// storage.Delete also removes user-owned .profile.json sidecars.
+		return a.saveDevice(device)
 	case "device.availability_changed":
 		var data struct {
 			DeviceID     string               `json:"deviceId"`
@@ -250,7 +243,7 @@ func (a *App) applyEvent(event hostapi.Event) error {
 		}
 		a.mu.Unlock()
 		if ok {
-			return a.saveDevice(device, nil)
+			return a.saveDevice(device)
 		}
 	case "component.state_changed":
 		var data struct {
@@ -270,10 +263,9 @@ func (a *App) applyEvent(event hostapi.Event) error {
 						device.Components[i].State[name] = value
 					}
 					device.Components[i].Revision = data.Revision
-					entity := translate.Entity(data.DeviceID, device.Components[i])
 					a.devices[data.DeviceID] = device
 					a.mu.Unlock()
-					return a.store.Save(entity)
+					return a.saveDevice(device)
 				}
 			}
 		}
