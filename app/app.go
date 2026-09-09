@@ -250,10 +250,12 @@ func (a *App) applyEvent(event hostapi.Event) error {
 			DeviceID, ComponentID string
 			Revision              int64
 			Patch                 map[string]any
+			Origin                string
 		}
 		if err := json.Unmarshal(event.Data, &data); err != nil {
 			return err
 		}
+		log.Printf("plugin-zigbee: lifecycle phase=host_event.received trace_id=%s event_id=%d device=%s component=%s origin=%s patch=%s", event.RequestID, event.ID, data.DeviceID, data.ComponentID, data.Origin, mustJSON(data.Patch))
 		a.mu.Lock()
 		device, ok := a.devices[data.DeviceID]
 		if ok {
@@ -265,7 +267,12 @@ func (a *App) applyEvent(event hostapi.Event) error {
 					device.Components[i].Revision = data.Revision
 					a.devices[data.DeviceID] = device
 					a.mu.Unlock()
-					return a.saveDevice(device)
+					log.Printf("plugin-zigbee: lifecycle phase=storage_save.start trace_id=%s event_id=%d device=%s component=%s origin=%s", event.RequestID, event.ID, data.DeviceID, data.ComponentID, data.Origin)
+					if err := a.saveDevice(device); err != nil {
+						return err
+					}
+					log.Printf("plugin-zigbee: lifecycle phase=storage_save.done trace_id=%s event_id=%d device=%s component=%s origin=%s", event.RequestID, event.ID, data.DeviceID, data.ComponentID, data.Origin)
+					return nil
 				}
 			}
 		}
@@ -404,13 +411,25 @@ func (a *App) handleCommand(addr messenger.Address, cmd any, message *messenger.
 			return
 		}
 		traceID := messenger.TraceID(message.Headers)
+		log.Printf("plugin-zigbee: lifecycle phase=command.received trace_id=%s entity=%s subject=%s action=%s", traceID, addr.Key(), message.Subject, action)
+		log.Printf("plugin-zigbee: lifecycle phase=route.loaded trace_id=%s entity=%s device=%s component=%s action=%s", traceID, addr.Key(), route.DeviceID, route.ComponentID, action)
+		log.Printf("plugin-zigbee: lifecycle phase=host_http.start trace_id=%s entity=%s device=%s component=%s action=%s parameters=%s", traceID, addr.Key(), route.DeviceID, route.ComponentID, action, mustJSON(parameters))
 		response, err := a.host.Command(ctx, route.DeviceID, route.ComponentID, hostapi.CommandRequest{Action: action, Parameters: parameters, RequestID: traceID, ObservationTimeoutMS: 30_000})
 		if err != nil {
 			log.Printf("plugin-zigbee: command %s failed: %v", addr.Key(), err)
 			return
 		}
+		log.Printf("plugin-zigbee: lifecycle phase=host_http.done trace_id=%s entity=%s command_id=%s status=%s", traceID, addr.Key(), response.Command.ID, response.Command.Status)
 		log.Printf("plugin-zigbee: command %s queued as %s (%s)", addr.Key(), response.Command.ID, response.Command.Status)
 	}()
+}
+
+func mustJSON(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
 }
 
 type key string

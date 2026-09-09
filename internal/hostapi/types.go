@@ -84,6 +84,7 @@ type CommandRequest struct {
 	Parameters           map[string]any `json:"parameters,omitempty"`
 	RequestID            string         `json:"requestId,omitempty"`
 	ObservationTimeoutMS int            `json:"observationTimeoutMs,omitempty"`
+	ObservationMode      string         `json:"observationMode,omitempty"`
 }
 
 type CommandResponse struct {
