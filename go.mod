@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/slidebolt/sb-contract v1.0.6
-	github.com/slidebolt/sb-domain v1.0.13
+	github.com/slidebolt/sb-domain v1.0.14
 	github.com/slidebolt/sb-messenger-sdk v1.0.7
 	github.com/slidebolt/sb-runtime v1.0.6
 	github.com/slidebolt/sb-storage-sdk v1.0.7
