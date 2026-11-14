@@ -44,7 +44,7 @@ func New() *App {
 }
 
 func (a *App) Hello() contract.HelloResponse {
-	return contract.HelloResponse{ID: PluginID, Kind: contract.KindPlugin, ContractVersion: contract.ContractVersion, DependsOn: []string{"messenger", "storage"}}
+	return contract.HelloResponse{ID: PluginID, Kind: contract.KindPlugin, ContractVersion: contract.ContractVersion, DependsOn: []string{"messenger", "storage"}, Definitions: contract.DescribePlugin("Zigbee", "Discovers Zigbee devices and translates capabilities into shared domain entities.", "binary_sensor", "number", "sensor", "switch")}
 }
 
 func (a *App) OnStart(deps map[string]json.RawMessage) (json.RawMessage, error) {
