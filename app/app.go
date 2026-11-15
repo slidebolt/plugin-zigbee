@@ -13,6 +13,7 @@ import (
 	contract "github.com/slidebolt/sb-contract"
 	domain "github.com/slidebolt/sb-domain"
 	messenger "github.com/slidebolt/sb-messenger-sdk"
+	runtime "github.com/slidebolt/sb-runtime"
 	storage "github.com/slidebolt/sb-storage-sdk"
 
 	"github.com/slidebolt/plugin-zigbee/internal/hostapi"
@@ -21,15 +22,18 @@ import (
 
 const PluginID = "plugin-zigbee"
 
+const zigbeeHostResource = "zigbee-host"
+
 type App struct {
-	msg    messenger.Messenger
-	store  storage.Storage
-	cmds   *messenger.Commands
-	subs   []messenger.Subscription
-	host   *hostapi.Client
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	msg      messenger.Messenger
+	store    storage.Storage
+	cmds     *messenger.Commands
+	subs     []messenger.Subscription
+	host     *hostapi.Client
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	reporter runtime.ResourceReporter
 
 	mu       sync.RWMutex
 	snapshot hostapi.Snapshot
@@ -44,18 +48,25 @@ func New() *App {
 }
 
 func (a *App) Hello() contract.HelloResponse {
+	setup := contract.SelectableSetup("Devices",
+		contract.SetupField{Key: "host_url", Environment: "ZIGBEE_HOST_URL", Name: "Zigbee host URL", Description: "URL of a running zigbee-host service.", Control: contract.SetupText, Format: "uri", Required: true},
+		contract.SetupField{Key: "host_token", Environment: "ZIGBEE_HOST_TOKEN", Name: "Zigbee host token", Description: "Bearer token shared with zigbee-host.", Control: contract.SetupSecret, Required: true, Sensitive: true},
+	)
+	setup.Resources = []contract.ExternalResourceDefinition{{
+		ID: zigbeeHostResource, Kind: contract.ExternalResourceService, Name: "Zigbee host", Description: "Owns the Zigbee coordinator and exposes its devices and event stream.",
+		Fields: []string{"host_url", "host_token"}, Activation: contract.ResourceActivation{Mode: contract.ResourceActivationAlways},
+	}}
 	return contract.HelloResponse{
 		ID:              PluginID,
 		Kind:            contract.KindPlugin,
 		ContractVersion: contract.ContractVersion,
 		DependsOn:       []string{"messenger", "storage"},
 		Definitions:     contract.DescribePlugin("Zigbee", "Discovers Zigbee devices and translates capabilities into shared domain entities.", "binary_sensor", "number", "sensor", "switch"),
-		Setup: contract.SelectableSetup("Devices",
-			contract.SetupField{Key: "host_url", Environment: "ZIGBEE_HOST_URL", Name: "Zigbee host URL", Description: "URL of a running zigbee-host service.", Control: contract.SetupText, Format: "uri", Required: true},
-			contract.SetupField{Key: "host_token", Environment: "ZIGBEE_HOST_TOKEN", Name: "Zigbee host token", Description: "Bearer token shared with zigbee-host.", Control: contract.SetupSecret, Required: true, Sensitive: true},
-		),
+		Setup:           setup,
 	}
 }
+
+func (a *App) SetResourceReporter(reporter runtime.ResourceReporter) { a.reporter = reporter }
 
 func (a *App) OnStart(deps map[string]json.RawMessage) (json.RawMessage, error) {
 	msg, err := messenger.Connect(deps)
@@ -76,6 +87,21 @@ func (a *App) OnStart(deps map[string]json.RawMessage) (json.RawMessage, error) 
 		return nil, err
 	}
 	a.host = host
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	snapshot, err := a.host.Snapshot(ctx)
+	cancel()
+	if err != nil {
+		a.resourceDegraded(err)
+		store.Close()
+		msg.Close()
+		return nil, fmt.Errorf("zigbee host initial snapshot: %w", err)
+	}
+	if err := a.applySnapshot(snapshot); err != nil {
+		store.Close()
+		msg.Close()
+		return nil, fmt.Errorf("store Zigbee host snapshot: %w", err)
+	}
+	a.resourceReady()
 	a.cmds = messenger.NewCommands(msg, domain.LookupCommand)
 	sub, err := a.cmds.ReceiveMessage(PluginID+".>", a.handleCommand)
 	if err != nil {
@@ -124,6 +150,7 @@ func (a *App) syncLoop() {
 			}
 			continue
 		}
+		a.resourceReady()
 		backoff = time.Second
 		if err := a.applySnapshot(snapshot); err != nil {
 			log.Printf("plugin-zigbee: apply snapshot: %v", err)
@@ -328,6 +355,7 @@ func (a *App) saveCoordinator(snapshot hostapi.Snapshot) error {
 func (a *App) markHostOffline(err error) {
 	if err != nil {
 		log.Printf("plugin-zigbee: host unavailable: %v", err)
+		a.resourceDegraded(err)
 	}
 	a.mu.Lock()
 	a.snapshot.Coordinator.Connected = false
@@ -336,6 +364,18 @@ func (a *App) markHostOffline(err error) {
 	snapshot := a.snapshot
 	a.mu.Unlock()
 	_ = a.saveCoordinator(snapshot)
+}
+
+func (a *App) resourceReady() {
+	if a.reporter != nil {
+		a.reporter.Ready(zigbeeHostResource)
+	}
+}
+
+func (a *App) resourceDegraded(err error) {
+	if a.reporter != nil {
+		a.reporter.Degraded(zigbeeHostResource, "host_unavailable", err.Error(), true)
+	}
 }
 
 func (a *App) countdownLoop() {
