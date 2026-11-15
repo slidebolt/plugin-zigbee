@@ -44,7 +44,17 @@ func New() *App {
 }
 
 func (a *App) Hello() contract.HelloResponse {
-	return contract.HelloResponse{ID: PluginID, Kind: contract.KindPlugin, ContractVersion: contract.ContractVersion, DependsOn: []string{"messenger", "storage"}, Definitions: contract.DescribePlugin("Zigbee", "Discovers Zigbee devices and translates capabilities into shared domain entities.", "binary_sensor", "number", "sensor", "switch")}
+	return contract.HelloResponse{
+		ID:              PluginID,
+		Kind:            contract.KindPlugin,
+		ContractVersion: contract.ContractVersion,
+		DependsOn:       []string{"messenger", "storage"},
+		Definitions:     contract.DescribePlugin("Zigbee", "Discovers Zigbee devices and translates capabilities into shared domain entities.", "binary_sensor", "number", "sensor", "switch"),
+		Setup: contract.SelectableSetup("Devices",
+			contract.SetupField{Key: "host_url", Environment: "ZIGBEE_HOST_URL", Name: "Zigbee host URL", Description: "URL of a running zigbee-host service.", Control: contract.SetupText, Format: "uri", Required: true},
+			contract.SetupField{Key: "host_token", Environment: "ZIGBEE_HOST_TOKEN", Name: "Zigbee host token", Description: "Bearer token shared with zigbee-host.", Control: contract.SetupSecret, Required: true, Sensitive: true},
+		),
+	}
 }
 
 func (a *App) OnStart(deps map[string]json.RawMessage) (json.RawMessage, error) {
