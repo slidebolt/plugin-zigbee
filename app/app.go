@@ -61,7 +61,7 @@ func (a *App) Hello() contract.HelloResponse {
 		Kind:            contract.KindPlugin,
 		ContractVersion: contract.ContractVersion,
 		DependsOn:       []string{"messenger", "storage"},
-		Definitions:     contract.DescribePlugin("Zigbee", "Discovers Zigbee devices and translates capabilities into shared domain entities.", "binary_sensor", "number", "sensor", "switch"),
+		Definitions:     contract.DescribePlugin("Zigbee", "Discovers Zigbee devices and translates capabilities into shared domain entities.", "binary_sensor", "button", "climate", "cover", "diagnostic", "fan", "light", "lock", "number", "select", "sensor", "switch", "text"),
 		Setup:           setup,
 	}
 }
@@ -216,6 +216,11 @@ func (a *App) applySnapshot(snapshot hostapi.Snapshot) error {
 func (a *App) saveDevice(device hostapi.Device) error {
 	dev := translate.Device(device)
 	entities := translate.Entities(device)
+	groups, err := domain.DeviceSecurityGroups(dev, entities...)
+	if err != nil {
+		return fmt.Errorf("derive Zigbee device security groups: %w", err)
+	}
+	dev.SecurityGroups = groups
 	dev.Entities = publicEntities(entities)
 	if err := a.store.Save(dev); err != nil {
 		return err
@@ -275,7 +280,7 @@ func (a *App) applyEvent(event hostapi.Event) error {
 		device, ok := a.devices[data.DeviceID]
 		if ok {
 			device.Reachability = data.Reachability
-			device.Available = data.Reachability.Status == "reachable"
+			device.Available = data.Reachability.Status == "reachable" || data.Reachability.Status == "degraded"
 			a.devices[data.DeviceID] = device
 		}
 		a.mu.Unlock()
@@ -425,6 +430,10 @@ func (a *App) handleCommand(addr messenger.Address, cmd any, message *messenger.
 		if addr.DeviceID == "coordinator" {
 			var err error
 			switch c := cmd.(type) {
+			case domain.ButtonPress:
+				if addr.EntityID == "refresh-network-diagnostics" {
+					err = a.host.RefreshNetworkDiagnostics(ctx)
+				}
 			case domain.SwitchTurnOn:
 				if addr.EntityID == "permit-join" {
 					err = a.host.SetPairing(ctx, true)

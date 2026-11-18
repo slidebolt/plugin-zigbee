@@ -60,3 +60,23 @@ func TestEventStreamHasNoWholeResponseTimeout(t *testing.T) {
 		t.Fatalf("request timeout=%v event timeout=%v", client.http.Timeout, client.events.Timeout)
 	}
 }
+
+func TestRefreshNetworkDiagnosticsUsesPrivateHostOperation(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/network/refresh" || r.Header.Get("Authorization") != "Bearer secret" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		called = true
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	client, _ := New(server.URL, "secret")
+	if err := client.RefreshNetworkDiagnostics(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("refresh operation was not called")
+	}
+}

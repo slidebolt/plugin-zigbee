@@ -24,23 +24,50 @@ type Component struct {
 }
 
 type Reachability struct {
-	Status      string `json:"status"`
-	LastSeen    string `json:"lastSeen,omitempty"`
-	LastSuccess string `json:"lastSuccess,omitempty"`
-	Reason      string `json:"reason,omitempty"`
+	Status      string   `json:"status"`
+	LastSeen    string   `json:"lastSeen,omitempty"`
+	LastSuccess string   `json:"lastSuccess,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
+	LastFailure *Failure `json:"lastFailure,omitempty"`
+}
+
+type Failure struct {
+	At     string `json:"at,omitempty"`
+	Code   string `json:"code,omitempty"`
+	Phase  string `json:"phase,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type NetworkObservation struct {
+	Role                  string   `json:"role"`
+	Address               int      `json:"address"`
+	PreviousAddress       *int     `json:"previousAddress,omitempty"`
+	AddressChangedAt      string   `json:"addressChangedAt,omitempty"`
+	ParentID              string   `json:"parentId,omitempty"`
+	Relationship          string   `json:"relationship,omitempty"`
+	Depth                 *int     `json:"depth,omitempty"`
+	LinkQuality           *float64 `json:"linkQuality,omitempty"`
+	ParentLinkQuality     *float64 `json:"parentLinkQuality,omitempty"`
+	LinkQualityObservedAt string   `json:"linkQualityObservedAt,omitempty"`
+	TopologyObservedAt    string   `json:"topologyObservedAt,omitempty"`
+	LastInboundAt         string   `json:"lastInboundAt,omitempty"`
+	LastOutboundSuccessAt string   `json:"lastOutboundSuccessAt,omitempty"`
+	LastFailure           *Failure `json:"lastFailure,omitempty"`
+	TopologyError         string   `json:"topologyError,omitempty"`
 }
 
 type Device struct {
-	ID           string       `json:"id"`
-	Name         string       `json:"name"`
-	Manufacturer string       `json:"manufacturer,omitempty"`
-	Model        string       `json:"model,omitempty"`
-	Description  string       `json:"description,omitempty"`
-	Kind         string       `json:"kind"`
-	Interview    string       `json:"interview"`
-	Available    bool         `json:"available"`
-	Reachability Reachability `json:"reachability"`
-	Components   []Component  `json:"components"`
+	ID           string              `json:"id"`
+	Name         string              `json:"name"`
+	Manufacturer string              `json:"manufacturer,omitempty"`
+	Model        string              `json:"model,omitempty"`
+	Description  string              `json:"description,omitempty"`
+	Kind         string              `json:"kind"`
+	Interview    string              `json:"interview"`
+	Available    bool                `json:"available"`
+	Reachability Reachability        `json:"reachability"`
+	Network      *NetworkObservation `json:"network,omitempty"`
+	Components   []Component         `json:"components"`
 }
 
 type Coordinator struct {

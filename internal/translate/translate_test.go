@@ -61,11 +61,41 @@ func TestLightTranslationColorState(t *testing.T) {
 func TestCoordinatorEntities(t *testing.T) {
 	snapshot := hostapi.Snapshot{Coordinator: hostapi.Coordinator{Connected: true, Channel: 20, PairedDevices: 2}, Pairing: hostapi.Pairing{DurationSeconds: 60}}
 	_, entities := Coordinator(snapshot)
-	if len(entities) != 6 {
+	if len(entities) != 7 {
 		t.Fatalf("entities=%d", len(entities))
 	}
 	number, ok := entities[2].State.(domain.Number)
 	if !ok || number.Min != 10 || number.Max != 254 {
 		t.Fatalf("duration=%#v", entities[2].State)
+	}
+	if entities[3].ID != "refresh-network-diagnostics" || !reflect.DeepEqual(entities[3].Commands, []string{"button_press"}) || entities[3].SecurityGroup != "system" {
+		t.Fatalf("refresh entity=%#v", entities[3])
+	}
+}
+
+func TestDeviceDiagnosticsUseGenericDomainEntities(t *testing.T) {
+	lqi, previous, depth := 147.0, 25760, 2
+	device := hostapi.Device{ID: "0xb0ce18140017459c", Name: "Bulb 02", Available: true,
+		Reachability: hostapi.Reachability{Status: "degraded", LastSeen: "2026-11-17T20:00:00Z", Reason: "device_unreachable"},
+		Network:      &hostapi.NetworkObservation{Role: "router", Address: 26510, PreviousAddress: &previous, ParentID: "0x00124b0000000001", Relationship: "child", Depth: &depth, LinkQuality: &lqi, LastInboundAt: "2026-11-17T20:00:00Z"},
+	}
+	translated := Device(device)
+	if translated.Status == nil || translated.Status.Health != "degraded" {
+		t.Fatalf("device=%#v", translated)
+	}
+	entities := Entities(device)
+	groups, err := domain.DeviceSecurityGroups(translated, entities...)
+	if err != nil || !reflect.DeepEqual(groups, []string{"system"}) {
+		t.Fatalf("security groups=%v err=%v", groups, err)
+	}
+	if len(entities) != 3 {
+		t.Fatalf("entities=%#v", entities)
+	}
+	if entities[1].Type != "sensor" || entities[1].SecurityGroup != "system" {
+		t.Fatalf("signal=%#v", entities[1])
+	}
+	diagnostic, ok := entities[2].State.(domain.Diagnostic)
+	if !ok || diagnostic["parentDeviceKey"] != "plugin-zigbee.0x00124b0000000001" || diagnostic["address"] != 26510 {
+		t.Fatalf("diagnostic=%#v", entities[2].State)
 	}
 }

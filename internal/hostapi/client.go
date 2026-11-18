@@ -66,6 +66,10 @@ func (c *Client) SetPairing(ctx context.Context, active bool) error {
 	return c.do(ctx, http.MethodPost, path, nil, nil)
 }
 
+func (c *Client) RefreshNetworkDiagnostics(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/v1/network/refresh", nil, nil)
+}
+
 func (c *Client) Events(ctx context.Context, streamID string, after int64, receive func(Event) error) error {
 	path := fmt.Sprintf("/v1/events?streamId=%s&after=%d", url.QueryEscape(streamID), after)
 	req, err := c.request(ctx, http.MethodGet, path, nil)

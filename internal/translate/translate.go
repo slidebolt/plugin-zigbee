@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	domain "github.com/slidebolt/sb-domain"
 
@@ -25,17 +26,38 @@ func Device(device hostapi.Device) domain.Device {
 	putMeta(meta, "model", device.Model)
 	putMeta(meta, "description", device.Description)
 	putMeta(meta, "interview", device.Interview)
-	return domain.Device{ID: device.ID, Plugin: PluginID, Name: device.Name, Meta: meta}
+	return domain.Device{ID: device.ID, Plugin: PluginID, Name: device.Name, Meta: meta, Status: status(device.Reachability)}
 }
 
 func Entities(device hostapi.Device) []domain.Entity {
 	result := make([]domain.Entity, 0, len(device.Components)+1)
 	result = append(result, domain.Entity{
 		ID: "availability", Plugin: PluginID, DeviceID: device.ID, Type: "binary_sensor", Name: "Connectivity",
-		State: domain.BinarySensor{On: device.Available, DeviceClass: "connectivity"},
+		SecurityGroup: "system", Status: status(device.Reachability), State: domain.BinarySensor{On: device.Available, DeviceClass: "connectivity"},
 	})
+	if device.Network != nil {
+		network := device.Network
+		var signal any
+		if network.LinkQuality != nil {
+			signal = *network.LinkQuality
+		}
+		result = append(result, domain.Entity{ID: "signal-quality", Plugin: PluginID, DeviceID: device.ID, Type: "sensor", Name: "Signal Quality", SecurityGroup: "system", Status: status(device.Reachability), State: domain.Sensor{Value: signal, DeviceClass: "signal_strength"}})
+		parentKey := ""
+		if network.ParentID != "" {
+			parentKey = PluginID + "." + network.ParentID
+		}
+		result = append(result, domain.Entity{ID: "network-link", Plugin: PluginID, DeviceID: device.ID, Type: "diagnostic", Name: "Network Link", SecurityGroup: "system", Status: status(device.Reachability), State: domain.Diagnostic{
+			"role": network.Role, "address": network.Address, "previousAddress": network.PreviousAddress, "addressChangedAt": network.AddressChangedAt,
+			"parentDeviceKey": parentKey, "relationship": network.Relationship, "depth": network.Depth, "linkQuality": network.LinkQuality,
+			"parentLinkQuality":     network.ParentLinkQuality,
+			"linkQualityObservedAt": network.LinkQualityObservedAt, "topologyObservedAt": network.TopologyObservedAt, "lastInboundAt": network.LastInboundAt,
+			"lastOutboundSuccessAt": network.LastOutboundSuccessAt, "lastFailure": network.LastFailure, "topologyError": network.TopologyError,
+		}})
+	}
 	for _, component := range device.Components {
-		result = append(result, Entity(device.ID, component))
+		entity := Entity(device.ID, component)
+		entity.Status = status(device.Reachability)
+		result = append(result, entity)
 	}
 	return result
 }
@@ -49,16 +71,37 @@ func Entity(deviceID string, component hostapi.Component) domain.Entity {
 }
 
 func Coordinator(snapshot hostapi.Snapshot) (domain.Device, []domain.Entity) {
-	device := domain.Device{ID: "coordinator", Plugin: PluginID, Name: "Zigbee Coordinator"}
+	coordinatorStatus := &domain.ResourceStatus{Health: "healthy", ObservedAt: time.Now()}
+	if !snapshot.Coordinator.Connected {
+		coordinatorStatus.Health, coordinatorStatus.Message = "unavailable", snapshot.Coordinator.LastError
+	}
+	device := domain.Device{ID: "coordinator", Plugin: PluginID, Name: "Zigbee Coordinator", SecurityGroups: []string{"system"}, Status: coordinatorStatus}
 	entities := []domain.Entity{
-		{ID: "connection", Plugin: PluginID, DeviceID: device.ID, Type: "binary_sensor", Name: "Connection", State: domain.BinarySensor{On: snapshot.Coordinator.Connected, DeviceClass: "connectivity"}},
-		{ID: "permit-join", Plugin: PluginID, DeviceID: device.ID, Type: "switch", Name: "Permit Join", Commands: []string{"switch_turn_on", "switch_turn_off"}, State: domain.Switch{Power: snapshot.Pairing.Active}},
-		{ID: "pairing-duration", Plugin: PluginID, DeviceID: device.ID, Type: "number", Name: "Pairing Duration", Commands: []string{"number_set_value"}, State: domain.Number{Value: float64(snapshot.Pairing.DurationSeconds), Min: 10, Max: 254, Step: 1, Unit: "s"}},
-		{ID: "pairing-remaining", Plugin: PluginID, DeviceID: device.ID, Type: "sensor", Name: "Pairing Remaining", State: domain.Sensor{Value: snapshot.Pairing.RemainingSeconds, Unit: "s"}},
-		{ID: "paired-devices", Plugin: PluginID, DeviceID: device.ID, Type: "sensor", Name: "Paired Devices", State: domain.Sensor{Value: snapshot.Coordinator.PairedDevices}},
-		{ID: "channel", Plugin: PluginID, DeviceID: device.ID, Type: "sensor", Name: "Channel", State: domain.Sensor{Value: snapshot.Coordinator.Channel}},
+		{ID: "connection", Plugin: PluginID, DeviceID: device.ID, Type: "binary_sensor", Name: "Connection", SecurityGroup: "system", Status: coordinatorStatus, State: domain.BinarySensor{On: snapshot.Coordinator.Connected, DeviceClass: "connectivity"}},
+		{ID: "permit-join", Plugin: PluginID, DeviceID: device.ID, Type: "switch", Name: "Permit Join", SecurityGroup: "system", Commands: []string{"switch_turn_on", "switch_turn_off"}, State: domain.Switch{Power: snapshot.Pairing.Active}},
+		{ID: "pairing-duration", Plugin: PluginID, DeviceID: device.ID, Type: "number", Name: "Pairing Duration", SecurityGroup: "system", Commands: []string{"number_set_value"}, State: domain.Number{Value: float64(snapshot.Pairing.DurationSeconds), Min: 10, Max: 254, Step: 1, Unit: "s"}},
+		{ID: "refresh-network-diagnostics", Plugin: PluginID, DeviceID: device.ID, Type: "button", Name: "Refresh Network Diagnostics", SecurityGroup: "system", Commands: []string{"button_press"}, State: domain.Button{}},
+		{ID: "pairing-remaining", Plugin: PluginID, DeviceID: device.ID, Type: "sensor", Name: "Pairing Remaining", SecurityGroup: "system", State: domain.Sensor{Value: snapshot.Pairing.RemainingSeconds, Unit: "s"}},
+		{ID: "paired-devices", Plugin: PluginID, DeviceID: device.ID, Type: "sensor", Name: "Paired Devices", SecurityGroup: "system", State: domain.Sensor{Value: snapshot.Coordinator.PairedDevices}},
+		{ID: "channel", Plugin: PluginID, DeviceID: device.ID, Type: "sensor", Name: "Channel", SecurityGroup: "system", State: domain.Sensor{Value: snapshot.Coordinator.Channel}},
 	}
 	return device, entities
+}
+
+func status(reachability hostapi.Reachability) *domain.ResourceStatus {
+	health := map[string]string{"reachable": "healthy", "degraded": "degraded", "unreachable": "unavailable", "removed": "unavailable"}[reachability.Status]
+	if health == "" {
+		health = "unknown"
+	}
+	result := &domain.ResourceStatus{Health: health, Message: reachability.Reason}
+	if observed, err := time.Parse(time.RFC3339Nano, reachability.LastSeen); err == nil {
+		result.ObservedAt = observed
+	} else if reachability.LastFailure != nil {
+		if observed, err := time.Parse(time.RFC3339Nano, reachability.LastFailure.At); err == nil {
+			result.ObservedAt = observed
+		}
+	}
+	return result
 }
 
 func Command(cmd any) (string, map[string]any, error) {
